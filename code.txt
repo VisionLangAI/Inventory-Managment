@@ -1,0 +1,172 @@
+🔹 1. Import Libraries
+# Core
+import numpy as np
+import pandas as pd
+
+# Visualization
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# ML
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from xgboost import XGBRegressor
+
+# Deep learning
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+
+# Explainability
+import shap
+from lime.lime_tabular import LimeTabularExplainer
+
+import warnings
+warnings.filterwarnings("ignore")
+
+🔹 2. Load Dataset
+df = pd.read_csv("supply_chain.csv")
+
+print(df.head())
+print(df.info())
+
+🔹 3. Data Preprocessing
+# Handle missing values
+df.fillna(method="ffill", inplace=True)
+
+# Encode categorical features
+le = LabelEncoder()
+
+for col in df.select_dtypes(include="object"):
+    df[col] = le.fit_transform(df[col])
+
+# Feature scaling
+scaler = StandardScaler()
+scaled_data = scaler.fit_transform(df)
+
+df_scaled = pd.DataFrame(scaled_data, columns=df.columns)
+
+🔹 4. EDA Visualization
+Correlation Heatmap
+plt.figure(figsize=(12,8))
+sns.heatmap(df_scaled.corr(), cmap="coolwarm")
+plt.title("Feature Correlation Heatmap")
+plt.show()
+
+Scatter Example
+plt.scatter(df["Shipping times"], df["Shipping costs"])
+plt.xlabel("Shipping Time")
+plt.ylabel("Shipping Cost")
+plt.title("Shipping Time vs Cost")
+plt.show()
+
+🔹 5. Feature Selection
+target_inventory = "Stock levels"
+target_cost = "Costs"
+
+X_inventory = df_scaled.drop(target_inventory, axis=1)
+y_inventory = df_scaled[target_inventory]
+
+X_cost = df_scaled.drop(target_cost, axis=1)
+y_cost = df_scaled[target_cost]
+
+🔹 6. Train/Test Split
+Xi_train, Xi_test, yi_train, yi_test = train_test_split(
+    X_inventory, y_inventory, test_size=0.2, random_state=42
+)
+
+Xc_train, Xc_test, yc_train, yc_test = train_test_split(
+    X_cost, y_cost, test_size=0.2, random_state=42
+)
+
+🔹 7. Classical ML Models — Inventory Prediction
+models = {
+    "RF": RandomForestRegressor(),
+    "GB": GradientBoostingRegressor(),
+    "XGB": XGBRegressor()
+}
+
+def evaluate(model, Xtr, Xte, ytr, yte):
+    model.fit(Xtr, ytr)
+    pred = model.predict(Xte)
+
+    return (
+        np.sqrt(mean_squared_error(yte, pred)),
+        mean_absolute_error(yte, pred),
+        r2_score(yte, pred)
+    )
+
+for name, model in models.items():
+    rmse, mae, r2 = evaluate(model, Xi_train, Xi_test, yi_train, yi_test)
+    print(name, rmse, mae, r2)
+
+🔹 8. Transformer Encoder + MLP (Cost Optimization)
+Model Definition
+class TransformerModel(nn.Module):
+
+    def __init__(self, input_dim):
+        super().__init__()
+
+        self.encoder_layer = nn.TransformerEncoderLayer(
+            d_model=input_dim,
+            nhead=4
+        )
+
+        self.transformer = nn.TransformerEncoder(
+            self.encoder_layer,
+            num_layers=2
+        )
+
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, x):
+        x = self.transformer(x)
+        return self.mlp(x)
+
+Training Transformer
+X_tensor = torch.tensor(Xc_train.values, dtype=torch.float32)
+y_tensor = torch.tensor(yc_train.values, dtype=torch.float32)
+
+dataset = TensorDataset(X_tensor, y_tensor)
+loader = DataLoader(dataset, batch_size=32)
+
+model = TransformerModel(X_tensor.shape[1])
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+loss_fn = nn.MSELoss()
+
+for epoch in range(50):
+
+    for xb, yb in loader:
+        optimizer.zero_grad()
+        pred = model(xb)
+        loss = loss_fn(pred.squeeze(), yb)
+        loss.backward()
+        optimizer.step()
+
+    print("Epoch:", epoch, "Loss:", loss.item())
+
+🔹 9. SHAP Explainability
+explainer = shap.Explainer(models["RF"], Xi_train)
+shap_values = explainer(Xi_test)
+
+shap.summary_plot(shap_values, Xi_test)
+
+🔹 10. LIME Explainability
+explainer_lime = LimeTabularExplainer(
+    Xi_train.values,
+    feature_names=Xi_train.columns,
+    mode="regression"
+)
+
+exp = explainer_lime.explain_instance(
+    Xi_test.iloc[0].values,
+    models["RF"].predict
+)
+
+exp.show_in_notebook()
